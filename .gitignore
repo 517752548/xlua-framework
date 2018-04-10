@@ -20,3 +20,4 @@ Assets/AssetsPackage/Lua.meta
 *.csproj
 *.sln
 Library/
+Temp/
