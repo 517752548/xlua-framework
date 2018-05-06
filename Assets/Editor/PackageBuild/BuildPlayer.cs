@@ -103,8 +103,8 @@ public class BuildPlayer : Editor
     public static void BuildAssetBundlesForCurSetting()
     {
         var buildTarget = EditorUserBuildSettings.activeBuildTarget;
-        var outputPath = PackageUtils.GetCurBuildSettingOutputPath();
-        BuildAssetBundles(buildTarget, outputPath);
+        string channelName = PackageUtils.GetCurSelectedChannel().ToString();
+        BuildAssetBundles(buildTarget, channelName);
     }
 
     public static void BuildAndroid(string channelName, bool isTest)
@@ -124,7 +124,11 @@ public class BuildPlayer : Editor
         string buildFolder = Path.Combine(System.Environment.CurrentDirectory, ApkOutputPath);
         GameUtility.CheckDirAndCreateWhenNeeded(buildFolder);
         BaseChannel channel = ChannelManager.instance.CreateChannel(channelName);
+#if UNITY_5_6_OR_NEWER
         PlayerSettings.applicationIdentifier = channel.GetBundleID();
+#else
+        PlayerSettings.bundleIdentifier = channel.GetBundleID();
+#endif
         PlayerSettings.productName = channel.GetPackageName();
 
         string savePath = null;
@@ -170,16 +174,20 @@ public class BuildPlayer : Editor
         PlayerSettings.SetIconsForTargetGroup(BuildTargetGroup.iOS, iconList.ToArray());
 
         BaseChannel channel = ChannelManager.instance.CreateChannel(channelName);
+#if UNITY_5_6_OR_NEWER
         PlayerSettings.applicationIdentifier = channel.GetBundleID();
+#else
+        PlayerSettings.bundleIdentifier = channel.GetBundleID();
+#endif
         PlayerSettings.productName = channel.GetPackageName();
         PackageUtils.CheckAndAddSymbolIfNeeded(buildTarget, channelName);
         BuildPipeline.BuildPlayer(GetBuildScenes(), buildFolder, buildTarget, BuildOptions.None);
     }
-	
-	static string[] GetBuildScenes()
-	{
-		List<string> names = new List<string>();
-		foreach (EditorBuildSettingsScene e in EditorBuildSettings.scenes)
+    
+    static string[] GetBuildScenes()
+    {
+        List<string> names = new List<string>();
+        foreach (EditorBuildSettingsScene e in EditorBuildSettings.scenes)
         {
             if (e != null && e.enabled)
             {

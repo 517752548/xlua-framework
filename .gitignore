@@ -21,3 +21,4 @@ Assets/AssetsPackage/Lua.meta
 *.sln
 Library/
 Temp/
+.vs/
