@@ -19,7 +19,7 @@ local EventSystemPath = "EventSystem"
 -- UICamera路径
 local UICameraPath = UIRootPath.."/UICamera"
 -- 分辨率
-local Resolution = Vector2.New(1024, 960)
+local Resolution = Vector2.New(1024, 768)
 -- 窗口最大可使用的相对order_in_layer
 local MaxOderPerWindow = 10
 -- cs Tip
@@ -339,7 +339,7 @@ local function DestroyWindowExceptLayer(self, layer, include_keep_model)
 end
 
 -- 销毁所有窗口
-local function DestroyAllWindow(self, ui_name, include_keep_model)
+local function DestroyAllWindow(self, include_keep_model)
 	for k,v in pairs(self.windows) do
 		InnerCloseWindow(self, v)
 		InnerDestroyWindow(self, k, v, include_keep_model)

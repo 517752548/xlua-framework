@@ -17,17 +17,16 @@ namespace AssetBundles
         
         public static void CheckAndDoRunning()
         {
+            WriteAssetBundleServerURL();
+
             bool needRunning = AssetBundleConfig.IsSimulateMode;
             bool isRunning = IsRunning();
             if (needRunning != isRunning)
             {
+                KillRunningAssetBundleServer();
                 if (needRunning)
                 {
                     Run();
-                }
-                else
-                {
-                    KillRunningAssetBundleServer();
                 }
             }
         }
@@ -74,9 +73,6 @@ namespace AssetBundles
 
 		static void Run ()
 		{
-			KillRunningAssetBundleServer();
-			WriteAssetBundleServerURL();
-
 			string args = string.Format("\"{0}\" {1}", AssetBundleConfig.LocalSvrAppWorkPath, Process.GetCurrentProcess().Id);
             ProcessStartInfo startInfo = ExecuteInternalMono.GetProfileStartInfoForMono(MonoInstallationFinder.GetMonoInstallation("MonoBleedingEdge"), GetMonoProfileVersion(), AssetBundleConfig.LocalSvrAppPath, args, true);
             startInfo.WorkingDirectory = AssetBundleConfig.LocalSvrAppWorkPath;
@@ -140,7 +136,7 @@ namespace AssetBundles
         {
             string ip = PackageUtils.GetLocalServerIP();
             string downloadURL = "http://" + ip + ":7888/";
-            downloadURL = downloadURL + PackageUtils.GetCurPlatformChannelPath() + "/";
+            downloadURL = downloadURL + PackageUtils.GetCurPlatformChannelRelativePath() + "/";
             return downloadURL;
         }
     }

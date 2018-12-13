@@ -62,20 +62,24 @@ namespace AssetBundles
         List<AssetBundleAsyncLoader> prosessingAssetBundleAsyncLoader = new List<AssetBundleAsyncLoader>();
         // 逻辑层正在等待的asset加载异步句柄
         List<AssetAsyncLoader> prosessingAssetAsyncLoader = new List<AssetAsyncLoader>();
+        // 为了消除GC
+        List<string> tmpStringList = new List<string>(8);
 
         public static string ManifestBundleName
         {
-            get;
-            set;
+            get
+            {
+                return BuildUtils.ManifestBundleName;
+            }
         }
-
-#if UNITY_EDITOR || CLIENT_DEBUG
+        
         // Hotfix测试---用于侧测试资源模块的热修复
         public void TestHotfix()
         {
+#if UNITY_EDITOR || CLIENT_DEBUG
             Logger.Log("********** AssetBundleManager : Call TestHotfix in cs...");
-        }
 #endif
+        }
 
         public IEnumerator Initialize()
         {
@@ -137,7 +141,14 @@ namespace AssetBundles
                     }
                 }
 
+                // 说明：设置被依赖数量为1的AB包为常驻包的理由详细情况见AssetBundleAsyncLoader.cs那一大堆注释
+                // TODO：1）目前已知Unity5.3版本和Unity5.5版本没问题，其它试过的几个版本都有问题，如果你使用的版本也有问题，需要修改这里的宏
+                //       2）整套AB包括压缩格式可能都要重新设计，这个以后有时间再去尝试
+#if !UNITY_5_3 && !UNITY_5_5
+                if (count >= 1)
+#else
                 if (count >= 2)
+#endif
                 {
                     SetAssetBundleResident(curAssetbundleName, true);
                 }
@@ -159,15 +170,7 @@ namespace AssetBundles
             // 要是不等待Unity很多版本都有各种Bug
             yield return new WaitUntil(() =>
             {
-                return prosessingWebRequester.Count == 0;
-            });
-            yield return new WaitUntil(() =>
-            {
-                return prosessingAssetBundleAsyncLoader.Count == 0;
-            });
-            yield return new WaitUntil(() =>
-            {
-                return prosessingAssetAsyncLoader.Count == 0;
+                return !IsProsessRunning;
             });
 
             ClearAssetsCache();
@@ -196,10 +199,18 @@ namespace AssetBundles
         {
             get
             {
-                return Setting.SERVER_RESOURCE_ADDR;
+                return URLSetting.SERVER_RESOURCE_URL;
             }
         }
-        
+
+        public bool IsProsessRunning
+        {
+            get
+            {
+                return prosessingWebRequester.Count != 0 || prosessingAssetBundleAsyncLoader.Count != 0 || prosessingAssetAsyncLoader.Count != 0;
+            }
+        }
+
         public void SetAssetBundleResident(string assetbundleName, bool resident)
         {
             Logger.Log("SetAssetBundleResident : " + assetbundleName + ", " + resident.ToString());
@@ -258,7 +269,7 @@ namespace AssetBundles
             assetsCaching[assetName] = asset;
         }
 
-        public void AddAssetbundleAssetsCache(string assetbundleName)
+        public void AddAssetbundleAssetsCache(string assetbundleName, string postfix = null)
         {
 #if UNITY_EDITOR
             if (AssetBundleConfig.IsEditorMode)
@@ -281,11 +292,15 @@ namespace AssetBundles
                 {
                     continue;
                 }
+                if (!string.IsNullOrEmpty(postfix) && !assetName.EndsWith(postfix))
+                {
+                    continue;
+                }
 
                 var assetPath = AssetBundleUtility.PackagePathToAssetsPath(assetName);
                 var asset = curAssetbundle == null ? null : curAssetbundle.LoadAsset(assetPath);
                 AddAssetCache(assetName, asset);
-
+                
 #if UNITY_EDITOR
                 // 说明：在Editor模拟时，Shader要重新指定
                 var go = asset as GameObject;
@@ -311,7 +326,7 @@ namespace AssetBundles
 #endif
             }
         }
-
+        
         public void ClearAssetsCache()
         {
             assetsCaching.Clear();
@@ -345,7 +360,14 @@ namespace AssetBundles
             int count = 0;
             assetbundleRefCount.TryGetValue(assetbundleName, out count);
             count--;
-            assetbundleRefCount[assetbundleName] = count;
+            if (count <= 0)
+            {
+                assetbundleRefCount.Remove(assetbundleName);
+            }
+            else
+            {
+                assetbundleRefCount[assetbundleName] = count;
+            }
             return count;
         }
 
@@ -387,7 +409,7 @@ namespace AssetBundles
                     if (!string.IsNullOrEmpty(dependance) && dependance != assetbundleName)
                     {
                         CreateAssetBundleAsync(dependance);
-                        // ab缓存对依赖持有的引用
+                        // A依赖于B，A对B持有引用
                         IncreaseReferenceCount(dependance);
                     }
                 }
@@ -403,7 +425,7 @@ namespace AssetBundles
             return loader;
         }
 
-        // 从服务器下载网页内容，需提供完整url
+        // 从服务器下载网页内容，需提供完整url，非AB（不计引用计数、不缓存），Creater使用后记得回收
         public ResourceWebRequester DownloadWebResourceAsync(string url)
         {
             var creater = ResourceWebRequester.Get();
@@ -413,7 +435,7 @@ namespace AssetBundles
             return creater;
         }
 
-        // 从资源服务器下载非Assetbundle资源
+        // 从资源服务器下载非Assetbundle资源，非AB（不计引用计数、不缓存），Creater使用后记得回收
         public ResourceWebRequester DownloadAssetFileAsync(string filePath)
         {
             if (string.IsNullOrEmpty(DownloadUrl))
@@ -430,7 +452,7 @@ namespace AssetBundles
             return creater;
         }
 
-        // 从资源服务器下载Assetbundle资源，不缓存，无依赖
+        // 从资源服务器下载Assetbundle资源，非AB（不计引用计数、不缓存），Creater使用后记得回收
         public ResourceWebRequester DownloadAssetBundleAsync(string filePath)
         {
             // 如果ResourceWebRequester升级到使用UnityWebRequester，那么下载AB和下载普通资源需要两个不同的DownLoadHandler
@@ -438,7 +460,7 @@ namespace AssetBundles
             return DownloadAssetFileAsync(filePath);
         }
 
-        // 本地异步请求非Assetbundle资源
+        // 本地异步请求非Assetbundle资源，非AB（不计引用计数、不缓存），Creater使用后记得回收
         public ResourceWebRequester RequestAssetFileAsync(string filePath, bool streamingAssetsOnly = true)
         {
             var creater = ResourceWebRequester.Get();
@@ -457,7 +479,7 @@ namespace AssetBundles
             return creater;
         }
 
-        // 本地异步请求Assetbundle资源，不缓存，无依赖
+        // 本地异步请求Assetbundle资源，不计引用计数、不缓存，Creater使用后记得回收
         public ResourceWebRequester RequestAssetBundleAsync(string assetbundleName)
         {
             var creater = ResourceWebRequester.Get();
@@ -467,53 +489,54 @@ namespace AssetBundles
             webRequesterQueue.Enqueue(creater);
             return creater;
         }
-
-        public void UnloadAssetBundleDependencies(string assetbundleName)
-        {
-            if (manifest != null)
-            {
-                string[] dependancies = manifest.GetAllDependencies(assetbundleName);
-                for (int i = 0; i < dependancies.Length; i++)
-                {
-                    var dependance = dependancies[i];
-                    if (!string.IsNullOrEmpty(dependance) && dependance != assetbundleName)
-                    {
-                        UnloadAssetBundle(dependance);
-                    }
-                }
-            }
-        }
-
-        protected bool UnloadAssetBundle(string assetbundleName, bool unloadResident = false, bool unloadAllLoadedObjects = false)
+        
+        protected bool UnloadAssetBundle(string assetbundleName, bool unloadResident = false, bool unloadAllLoadedObjects = false, bool unloadDependencies = true)
         {
             int count = GetReferenceCount(assetbundleName);
-            if (count <= 0)
-            {
-                return false;
-            }
-
-            count = DecreaseReferenceCount(assetbundleName);
             if (count > 0)
             {
+                // 存在引用，还是被需要的，不能卸载
                 return false;
             }
 
             var assetbundle = GetAssetBundleCache(assetbundleName);
             var isResident = IsAssetBundleResident(assetbundleName);
-            if (assetbundle != null)
+            if (!isResident || (isResident && unloadResident))
             {
-                if (!isResident || isResident && unloadResident)
+                if (assetbundle != null)
                 {
                     assetbundle.Unload(unloadAllLoadedObjects);
-                    RemoveAssetBundleCache(assetbundleName);
-                    UnloadAssetBundleDependencies(assetbundleName);
-                    return true;
                 }
+                
+                RemoveAssetBundleCache(assetbundleName);
+                if (unloadDependencies && manifest != null)
+                {
+                    string[] dependancies = manifest.GetAllDependencies(assetbundleName);
+                    for (int i = 0; i < dependancies.Length; i++)
+                    {
+                        var dependance = dependancies[i];
+                        if (!string.IsNullOrEmpty(dependance) && dependance != assetbundleName)
+                        {
+                            // 解除对依赖项持有的引用
+                            int dependanceCount = DecreaseReferenceCount(dependance);
+                            if (dependanceCount <= 0)
+                            {
+                                UnloadAssetBundle(dependance, unloadResident, unloadAllLoadedObjects, false);
+                            }
+                        }
+                    }
+                }
+
+                return true;
             }
-            return false;
+            else
+            {
+                return false;
+            }
         }
 
-        public bool TryUnloadAssetBundle(string assetbundleName, bool unloadAllLoadedObjects = false)
+        // 用于卸载无用AB包：如果该AB包还在使用，则卸载失败
+        public bool UnloadUnusedAssetBundle(string assetbundleName, bool unloadAllLoadedObjects = false, bool unloadDependencies = true)
         {
             int count = GetReferenceCount(assetbundleName);
             if (count > 0)
@@ -521,16 +544,20 @@ namespace AssetBundles
                 return false;
             }
 
-            return UnloadAssetBundle(assetbundleName, true, unloadAllLoadedObjects);
+            // 按照目前的设计，只能卸载常驻AB包
+            Logger.Assert(IsAssetBundleResident(assetbundleName) == true, "Only resident abs can exist with ref count 0 !!!");
+            return UnloadAssetBundle(assetbundleName, true, unloadAllLoadedObjects, unloadDependencies);
         }
 
-        public void UnloadUnusedAssetBundles(bool unloadResident = false, bool unloadAllLoadedObjects = false)
+        // 用于卸载所有无用AB包：如果该AB包还在使用，则卸载失败
+        public int UnloadAllUnusedResidentAssetBundles(bool unloadAllLoadedObjects = false, bool unloadDependencies = true)
         {
             int unloadCount = 0;
             bool hasDoUnload = false;
             do
             {
                 hasDoUnload = false;
+                tmpStringList.Clear();
                 var iter = assetbundleRefCount.GetEnumerator();
                 while (iter.MoveNext())
                 {
@@ -538,15 +565,24 @@ namespace AssetBundles
                     var referenceCount = iter.Current.Value;
                     if (referenceCount <= 0)
                     {
-                        var result = UnloadAssetBundle(assetbundleName, unloadResident, unloadAllLoadedObjects);
-                        if (result)
-                        {
-                            unloadCount++;
-                            hasDoUnload = true;
-                        }
+                        // 按照目前的设计，只能卸载常驻AB包
+                        Logger.Assert(IsAssetBundleResident(assetbundleName) == true, "Only resident abs can exist with ref count 0 !!!");
+                        tmpStringList.Add(assetbundleName);
                     }
                 }
+                for (int i = 0; i < tmpStringList.Count; i++)
+                {
+                    string toRemoveName = tmpStringList[i];
+                    var result = UnloadAssetBundle(toRemoveName, true, unloadAllLoadedObjects, unloadDependencies);
+                    if (result)
+                    {
+                        unloadCount++;
+                        hasDoUnload = true;
+                    }
+                }
+                tmpStringList.Clear();
             } while (hasDoUnload);
+            return unloadCount;
         }
 
         public bool MapAssetPath(string assetPath, out string assetbundleName, out string assetName)
@@ -606,16 +642,27 @@ namespace AssetBundles
                 {
                     prosessingWebRequester.RemoveAt(i);
                     webRequesting.Remove(creater.assetbundleName);
-                    UnloadAssetBundle(creater.assetbundleName);
                     if (creater.noCache)
                     {
-                        return;
+                        // 无缓存，不计引用计数、Creater使用后由上层回收，所以这里不需要做任何处理
                     }
-                    // 说明：有错误也缓存下来，只不过资源为空
-                    // 1、避免再次错误加载
-                    // 2、如果不存下来加载器将无法判断什么时候结束
-                    AddAssetBundleCache(creater.assetbundleName, creater.assetbundle);
-                    creater.Dispose();
+                    else
+                    {
+                        // AB缓存
+                        // 说明：有错误也缓存下来，只不过资源为空
+                        // 1、避免再次错误加载
+                        // 2、如果不存下来加载器将无法判断什么时候结束
+                        AddAssetBundleCache(creater.assetbundleName, creater.assetbundle);
+
+                        // 解除创建器对AB持有的引用，一般创建器存在，则一定至少有一个加载器在等待并对该AB持有引用
+                        int count = DecreaseReferenceCount(creater.assetbundleName);
+                        Logger.Assert(count > 0, "AssetBundle creater done but no one need it!!!");
+                        if (count <= 0)
+                        {
+                            UnloadAssetBundle(creater.assetbundleName);
+                        }
+                        creater.Dispose();
+                    }
                 }
             }
             int slotCount = prosessingWebRequester.Count;
@@ -636,7 +683,12 @@ namespace AssetBundles
                 loader.Update();
                 if (loader.IsDone())
                 {
-                    UnloadAssetBundle(loader.assetbundleName);
+                    // 解除加载器对AB持有的引用
+                    int count = DecreaseReferenceCount(loader.assetbundleName);
+                    if (count <= 0)
+                    {
+                        UnloadAssetBundle(loader.assetbundleName);
+                    }
                     prosessingAssetBundleAsyncLoader.RemoveAt(i);
                 }
             }
