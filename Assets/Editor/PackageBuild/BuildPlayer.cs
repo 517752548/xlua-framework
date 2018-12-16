@@ -258,5 +258,5 @@ public class BuildPlayer : Editor
         AssetDatabase.Refresh();
     }
 }
-}
+
 
